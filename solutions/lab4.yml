@@ -4,5 +4,5 @@
     web_package: nginx
   tasks:
     - name: Install using variable
-      apt:
+      yum:
         name: "{{ web_package }}"
