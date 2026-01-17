@@ -1,0 +1,7 @@
+- hosts: web
+  become: yes
+  tasks:
+    - name: Install nginx on Ubuntu only
+      apt:
+        name: nginx
+      when: ansible_distribution == "Ubuntu"

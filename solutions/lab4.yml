@@ -1,0 +1,8 @@
+- hosts: web
+  become: yes
+  vars:
+    web_package: nginx
+  tasks:
+    - name: Install using variable
+      apt:
+        name: "{{ web_package }}"

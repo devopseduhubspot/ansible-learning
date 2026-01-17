@@ -1,0 +1,10 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: Create users
+      user:
+        name: "{{ item }}"
+      loop:
+        - dev
+        - test
+        - prod
