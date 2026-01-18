@@ -1,0 +1,182 @@
+---
+- name: Deploy EC2 Instance with Nginx
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aws_region: us-east-1
+    instance_type: t3.micro
+    key_name: ansible-lab-key  # Change to your key pair name
+    security_group_name: ansible-nginx-sg
+    instance_name: ansible-nginx-server
+    
+  tasks:
+    - name: Create security group
+      amazon.aws.ec2_security_group:
+        name: "{{ security_group_name }}"
+        description: Security group for Ansible nginx lab
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 22
+            cidr_ip: 0.0.0.0/0  # Change to your IP for better security
+            rule_desc: SSH access
+          - proto: tcp
+            ports:
+              - 80
+            cidr_ip: 0.0.0.0/0
+            rule_desc: HTTP access
+          - proto: tcp
+            ports:
+              - 443
+            cidr_ip: 0.0.0.0/0
+            rule_desc: HTTPS access
+        tags:
+          Lab: "10"
+          Purpose: "Learning"
+      tags: [provision, never_cleanup]
+
+    - name: Launch EC2 instance
+      amazon.aws.ec2_instance:
+        name: "{{ instance_name }}"
+        image_id: ami-0c02fb55956c7d316  # Amazon Linux 2023 (update for your region)
+        instance_type: "{{ instance_type }}"
+        key_name: "{{ key_name }}"
+        security_group: "{{ security_group_name }}"
+        region: "{{ aws_region }}"
+        wait: true
+        wait_timeout: 300
+        tags:
+          Lab: "10"
+          Purpose: "Learning"
+          Environment: "Test"
+      register: ec2_instance
+      tags: [provision, never_cleanup]
+
+    - name: Wait for SSH to be available
+      wait_for:
+        host: "{{ ec2_instance.instances[0].public_ip_address }}"
+        port: 22
+        delay: 30
+        timeout: 300
+      tags: [provision, configure]
+
+    - name: Add instance to inventory
+      add_host:
+        name: "{{ ec2_instance.instances[0].public_ip_address }}"
+        groups: nginx_servers
+        ansible_ssh_private_key_file: ~/.ssh/{{ key_name }}.pem  # Adjust path
+        ansible_user: ec2-user  # Use 'ubuntu' for Ubuntu AMI
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+      tags: [provision, configure]
+
+    - name: Display instance information
+      debug:
+        msg:
+          - "Instance ID: {{ ec2_instance.instances[0].instance_id }}"
+          - "Public IP: {{ ec2_instance.instances[0].public_ip_address }}"
+          - "Private IP: {{ ec2_instance.instances[0].private_ip_address }}"
+      tags: [provision, configure]
+
+- name: Configure Nginx on EC2 instance
+  hosts: nginx_servers
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+      tags: [configure]
+
+    - name: Update system packages (Ubuntu)
+      apt:
+        upgrade: dist
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      tags: [configure]
+
+    - name: Install nginx
+      package:
+        name: nginx
+        state: present
+      tags: [configure]
+
+    - name: Create custom index.html from template
+      template:
+        src: templates/index.html.j2
+        dest: /var/www/html/index.html
+        mode: '0644'
+      tags: [configure]
+
+    - name: Start and enable nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: [configure]
+
+    - name: Check nginx status
+      service:
+        name: nginx
+        state: started
+      register: nginx_status
+      tags: [configure]
+
+    - name: Display nginx status
+      debug:
+        msg: "Nginx service is {{ nginx_status.state }}"
+      tags: [configure]
+
+- name: Display final information
+  hosts: localhost
+  gather_facts: false
+  
+  tasks:
+    - name: Display website URL
+      debug:
+        msg: "Website available at: http://{{ hostvars[groups['nginx_servers'][0]]['ansible_host'] }}"
+      when: groups['nginx_servers'] is defined
+      tags: [configure]
+
+- name: Cleanup resources (run with --tags cleanup)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aws_region: us-east-1
+    security_group_name: ansible-nginx-sg
+    instance_name: ansible-nginx-server
+    
+  tasks:
+    - name: Get instance information
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ instance_name }}"
+          "instance-state-name": ["running", "stopped", "stopping"]
+      register: instance_info
+      tags: [cleanup, never]
+
+    - name: Terminate EC2 instance
+      amazon.aws.ec2_instance:
+        instance_ids: "{{ instance_info.instances | map(attribute='instance_id') | list }}"
+        state: terminated
+        region: "{{ aws_region }}"
+        wait: true
+      when: instance_info.instances | length > 0
+      tags: [cleanup, never]
+
+    - name: Delete security group
+      amazon.aws.ec2_security_group:
+        name: "{{ security_group_name }}"
+        region: "{{ aws_region }}"
+        state: absent
+      tags: [cleanup, never]
+
+    - name: Cleanup complete
+      debug:
+        msg: "All resources have been cleaned up!"
+      tags: [cleanup, never]

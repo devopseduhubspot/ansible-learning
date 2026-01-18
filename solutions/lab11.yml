@@ -1,0 +1,270 @@
+---
+- name: Windows Host Management with Ansible
+  hosts: windows
+  gather_facts: yes
+  
+  tasks:
+    - name: Test Windows connectivity
+      win_ping:
+      tags: [connectivity]
+
+    - name: Get system information
+      win_shell: |
+        Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, WindowsBuildLabEx, TotalPhysicalMemory, CsProcessors
+      register: system_info
+      tags: [info]
+
+    - name: Display system information
+      debug:
+        msg: 
+          - "System Info Retrieved:"
+          - "{{ system_info.stdout_lines }}"
+      tags: [info]
+
+    - name: Check if Chocolatey is installed
+      win_shell: |
+        if (Get-Command choco -ErrorAction SilentlyContinue) { 
+            Write-Output "Chocolatey is installed"
+            choco --version
+        } else { 
+            Write-Output "Chocolatey not found" 
+        }
+      register: choco_check
+      tags: [software]
+
+    - name: Install Chocolatey if not present
+      win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+      when: "'not found' in choco_check.stdout"
+      tags: [software]
+
+    - name: Install useful software packages
+      win_chocolatey:
+        name:
+          - notepadplusplus
+          - 7zip
+          - googlechrome
+        state: present
+      tags: [software]
+
+    - name: Create demo directory structure
+      win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - C:\AnsibleDemo
+        - C:\AnsibleDemo\Scripts
+        - C:\AnsibleDemo\Data
+        - C:\AnsibleDemo\Logs
+      tags: [files]
+
+    - name: Create a demo PowerShell script
+      win_copy:
+        content: |
+          # Ansible Demo Script
+          # Created: {{ ansible_date_time.iso8601 }}
+          
+          Write-Host "=== Ansible Windows Demo Script ===" -ForegroundColor Green
+          Write-Host "Hostname: $env:COMPUTERNAME" -ForegroundColor Yellow
+          Write-Host "Current User: $env:USERNAME" -ForegroundColor Yellow
+          Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Yellow
+          Write-Host "Current Date: $(Get-Date)" -ForegroundColor Yellow
+          
+          # System Information
+          Write-Host "`n=== System Information ===" -ForegroundColor Green
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, TotalPhysicalMemory | Format-List
+          
+          # Running Services
+          Write-Host "=== Key Services ===" -ForegroundColor Green
+          Get-Service | Where-Object {$_.Status -eq "Running" -and $_.Name -match "W3SVC|WinRM|Spooler"} | Format-Table Name, Status
+          
+          Write-Host "Script executed successfully by Ansible!" -ForegroundColor Green
+        dest: C:\AnsibleDemo\Scripts\demo-script.ps1
+      tags: [files]
+
+    - name: Create system information file
+      win_copy:
+        content: |
+          Ansible Windows Management Demo
+          ===============================
+          
+          Server: {{ ansible_hostname }}
+          OS: {{ ansible_os_name }}
+          Architecture: {{ ansible_architecture }}
+          Domain: {{ ansible_domain | default('WORKGROUP') }}
+          
+          Deployed by Ansible on: {{ ansible_date_time.iso8601 }}
+          
+          This file demonstrates that Ansible can:
+          ✓ Connect to Windows hosts via WinRM
+          ✓ Create files and directories
+          ✓ Install software packages
+          ✓ Execute PowerShell commands
+          ✓ Manage Windows services
+          ✓ Configure system features
+        dest: C:\AnsibleDemo\deployment-info.txt
+      tags: [files]
+
+    - name: Execute the demo PowerShell script
+      win_shell: C:\AnsibleDemo\Scripts\demo-script.ps1
+      register: script_output
+      tags: [execute]
+
+    - name: Display script execution results
+      debug:
+        msg: "{{ script_output.stdout_lines }}"
+      tags: [execute]
+
+    - name: Check Windows features status
+      win_shell: |
+        Get-WindowsFeature | Where-Object {$_.Name -match "IIS|Web"} | Select-Object Name, InstallState | Format-Table -AutoSize
+      register: web_features
+      tags: [features]
+
+    - name: Install IIS Web Server (if not already installed)
+      win_feature:
+        name:
+          - IIS-WebServerRole
+          - IIS-WebServer
+          - IIS-CommonHttpFeatures
+          - IIS-StaticContent
+          - IIS-DefaultDocument
+        state: present
+      register: iis_result
+      tags: [features, iis]
+
+    - name: Create custom web page for IIS
+      win_copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Ansible Windows Demo</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+                  .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+                  h1 { color: #333; text-align: center; }
+                  .success { background: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 20px 0; }
+                  .info { background: #d1ecf1; color: #0c5460; padding: 15px; border-radius: 5px; margin: 20px 0; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🪟 Ansible Windows Management Success!</h1>
+                  <div class="success">
+                      <h3>✅ Tasks Completed Successfully:</h3>
+                      <ul>
+                          <li>Connected to Windows host via WinRM</li>
+                          <li>Installed Chocolatey package manager</li>
+                          <li>Installed software packages (Notepad++, 7-Zip, Chrome)</li>
+                          <li>Created directories and files</li>
+                          <li>Executed PowerShell scripts</li>
+                          <li>Enabled IIS Web Server</li>
+                          <li>Created this custom web page</li>
+                      </ul>
+                  </div>
+                  <div class="info">
+                      <h3>📋 Server Details:</h3>
+                      <p><strong>Hostname:</strong> {{ ansible_hostname }}</p>
+                      <p><strong>OS:</strong> {{ ansible_os_name }}</p>
+                      <p><strong>Managed by:</strong> Ansible Automation</p>
+                      <p><strong>Deployment Time:</strong> {{ ansible_date_time.iso8601 }}</p>
+                  </div>
+                  <div class="info">
+                      <p><strong>🎉 This proves that Ansible works perfectly with Windows!</strong></p>
+                      <p>You can now manage Windows servers just like Linux servers using Ansible playbooks.</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        dest: C:\inetpub\wwwroot\ansible-demo.html
+      tags: [features, iis]
+
+    - name: Ensure IIS service is running
+      win_service:
+        name: W3SVC
+        state: started
+        start_mode: auto
+      tags: [features, iis]
+
+    - name: Get list of installed software
+      win_shell: |
+        Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | 
+        Where-Object {$_.DisplayName -match "Notepad|7-Zip|Chrome"} | 
+        Select-Object DisplayName, DisplayVersion | 
+        Format-Table -AutoSize
+      register: installed_software
+      tags: [verify]
+
+    - name: Display installed software
+      debug:
+        msg: "{{ installed_software.stdout_lines }}"
+      tags: [verify]
+
+    - name: Get running services status
+      win_shell: |
+        Get-Service | Where-Object {$_.Status -eq "Running" -and $_.Name -match "W3SVC|WinRM|Themes"} | 
+        Select-Object Name, Status, StartType | Format-Table -AutoSize
+      register: service_status
+      tags: [verify]
+
+    - name: Display service status
+      debug:
+        msg: "{{ service_status.stdout_lines }}"
+      tags: [verify]
+
+    - name: Create final summary report
+      win_copy:
+        content: |
+          ANSIBLE WINDOWS MANAGEMENT DEMONSTRATION REPORT
+          ===============================================
+          
+          Execution Date: {{ ansible_date_time.iso8601 }}
+          Target Host: {{ ansible_hostname }} ({{ ansible_default_ipv4.address }})
+          Operating System: {{ ansible_os_name }}
+          
+          TASKS COMPLETED:
+          ✓ Established WinRM connection
+          ✓ Gathered comprehensive system information
+          ✓ Installed Chocolatey package manager
+          ✓ Installed software: Notepad++, 7-Zip, Google Chrome  
+          ✓ Created directory structure: C:\AnsibleDemo\
+          ✓ Generated and executed PowerShell scripts
+          ✓ Enabled IIS Web Server feature
+          ✓ Created custom web page: C:\inetpub\wwwroot\ansible-demo.html
+          ✓ Configured and started Windows services
+          ✓ Verified installations and configurations
+          
+          ANSIBLE MODULES DEMONSTRATED:
+          - win_ping: Test connectivity
+          - win_shell: Execute PowerShell commands
+          - win_chocolatey: Package management
+          - win_file: Directory creation
+          - win_copy: File creation and content management
+          - win_feature: Windows feature management
+          - win_service: Service control
+          
+          CONCLUSION:
+          This demonstration successfully proves that Ansible can effectively
+          manage Windows servers with the same ease and automation capabilities
+          as Linux systems. The WinRM protocol provides reliable connectivity,
+          and the comprehensive Windows modules enable full system administration.
+          
+          Next Steps:
+          - Access the web page: http://{{ ansible_default_ipv4.address }}/ansible-demo.html
+          - Review created files in C:\AnsibleDemo\
+          - Run the demo script manually: C:\AnsibleDemo\Scripts\demo-script.ps1
+        dest: C:\AnsibleDemo\SUMMARY-REPORT.txt
+      tags: [report]
+
+    - name: Display final success message
+      debug:
+        msg:
+          - "🎉 Ansible Windows management demonstration completed successfully!"
+          - "📋 Summary report created: C:\\AnsibleDemo\\SUMMARY-REPORT.txt"
+          - "🌐 Web demo available: http://{{ ansible_default_ipv4.address }}/ansible-demo.html"
+          - "📁 Demo files located: C:\\AnsibleDemo\\"
+          - "✅ All tasks executed without errors!"
+      tags: [report]
